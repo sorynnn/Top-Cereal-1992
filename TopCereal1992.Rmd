@@ -1,0 +1,109 @@
+---
+title: "Top Cereal 1992"
+author: "Soryn Lurding"
+date: "October 13, 2024"
+output: pdf_document
+---
+In this problem you will perform demand estimation using market level data. Run the following code in R
+```{r eval=TRUE}
+#install.packages("BLPestimatoR")
+library(BLPestimatoR)
+data(productData_cereal)
+
+```
+A table of market shares, prices, and characteristics of the top-selling brands of cereal in 1992 across several markets is now available in your environment. The data are aggregated from household-level scanner data (collected at supermarket checkout counters).
+We observe the following variables 
+
+price = price paid for the cereal 
+const = just a column of 1’s that you can ignore. 
+sugar = how much sugar is in the cereal 
+mushy = how mushy the cereal becomes with milk.
+share = market share of the cereal in that particular market. This number is between 0 and 1. 
+cdid = tells you which market you are in. 
+product_id = tells you which cereal is captured. 
+IV1-IV20 = 20 constructed instrumental variables.
+
+1. Find the market share of the outside good in every market. That is, sum all of the shares across all of the cereals for each market. You will notice that this number is less than 1. The market share of the outside option is equal to 1 - total cereal market share in each market. (Hint: you can use the aggregate to sum up the cereal shares by market)
+
+```{r eval=TRUE}
+# We can use the function ave(variable, grouping variable, FUN = function(x) 1-sum(x))
+
+productData_cereal$outside_share <- ave(productData_cereal$share, productData_cereal$cdid, FUN = function(x) 1-sum(x))
+# this will create your new depedent variable (i.e. log(sj)-log(so))
+productData_cereal$y <- log(productData_cereal$share)-log(productData_cereal$outside_share)
+
+```
+
+
+2. Estimate the share regression using mushy, sugar, and price as explantory variables using OLS
+
+```{r eval=TRUE}
+## In this section we are just going to run OLS on the linear demand curve
+blp.reg.1<-lm(y~price+sugar+mushy, data=productData_cereal)
+
+library(fixest)
+blp.reg.2 <-feols(y~price+sugar+mushy | cdid, data=productData_cereal) 
+#Include market fixed effects
+```
+
+3. 2SLS: Use the instrumental variables IV1 - IV10 to instrument for price
+```{r eval=TRUE}
+blp.reg.3 <- feols(y~sugar+mushy| cdid | price ~ IV1+IV2+IV3+IV4+IV5+IV6+IV7+IV8+IV9+IV10, data=productData_cereal)
+modelsummary::modelsummary(list("OLS"=blp.reg.1, "Fixed Effect"=blp.reg.2, "IV"=blp.reg.3), stars = TRUE, coef_rename = c("fit_price"="price"), title = "Model including all Instruments")
+```
+
+4. 2SLS: perform the first stage F-stat test to judge the strength of your instruments and the second stage sargent test to see if these instruments are independent of the error term.
+
+```{r eval=TRUE}
+# Hint use the summary function with object bls.reg.3
+summary(blp.reg.3)
+#F-test first stage: Passes our constraint 
+#Sargan test: p-value <0.01, so we reject the null (this tells us our interments are correlated with the errors)
+```
+
+
+5. 2SLS: can you use a smaller set of instruments to get a better result? If so, then what instruments did you include? Report your results including the first stage F-stats and the overidentification test.
+
+Hint: You will need to run the first stage regression and identify which instruments are significant. Try using only the significant instruments.
+```{r}
+summary(feols(price ~ sugar+mushy + IV1+IV2+IV3+IV4+IV5+IV6+IV7+IV8+IV9+IV10 | cdid, data = productData_cereal))
+#we can see that in terms of the IV's, IV5, IV6, IV7, IV8, and IV9 are correlated with price, so we will rerun the regression with only these instruments
+```
+
+
+```{r}
+blp.reg.4 <- feols(y~sugar+mushy| cdid | price ~ IV5+IV6+IV7+IV8+IV9, data=productData_cereal)
+summary(blp.reg.4)
+#F-test first stage: passes
+#Sargan test: causes us to reject
+```
+
+
+```{r}
+modelsummary::modelsummary(list("OLS"=blp.reg.1, "Fixed Effect"=blp.reg.2, "IV"=blp.reg.4), stars = TRUE, coef_rename = c("fit_price"="price"), title = "Model including IV5, IV6, IV7, IV8, and IV9")
+```
+
+
+```{r}
+#Since this isnt the first stage, we're going to look at the residuals:
+
+productData_cereal$blp_reg4_residuals <- blp.reg.4$residuals
+
+
+summary(feols(blp_reg4_residuals ~ sugar+mushy + IV5+IV6+IV7+IV8+IV9 | cdid, data = productData_cereal))
+#IV7 and IV8 are failing the exclusion restriction so we take them out
+```
+
+
+```{r}
+blp.reg.5 <- feols(y~ sugar+mushy |cdid | price ~ IV5+IV6+IV9, data = productData_cereal)
+summary(blp.reg.5)
+#F-test: pass
+#Sargan: fail to reject 
+```
+
+```{r eval=TRUE}
+#Model summary of our final model:
+modelsummary::modelsummary(list("OLS"=blp.reg.1, "Fixed Effect"=blp.reg.2, "IV"=blp.reg.5), stars = TRUE, coef_rename = c("fit_price"="price"), title = "Model including IV5, IV6, and IV9")
+
+```
